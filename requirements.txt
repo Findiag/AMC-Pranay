@@ -1,0 +1,19 @@
+flask>=3.0
+flask-cors>=4.0          # CORS for Bubble / cross-origin frontend
+gunicorn>=21.2           # production WSGI (Railway / Heroku / Fly)
+pdfplumber>=0.10
+openpyxl>=3.1
+pandas>=2.0
+pypdf>=4.0
+reportlab>=4.0
+scikit-learn>=1.4
+numpy>=1.24
+requests>=2.31           # Airtable upload + general HTTP
+
+# RAG layer
+chromadb>=0.4.22
+sentence-transformers>=2.5.0
+
+# LLM SDKs
+anthropic>=0.40.0   # primary — Claude is the default BS/PL mapper as of 2026-05
+openai>=1.12.0      # legacy — used only when mapper_mode=v2_llm or for the RAG fallback

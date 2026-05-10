@@ -1,0 +1,90 @@
+{
+  "company": "Shalon_Silks",
+  "variant": "standalone",
+  "_source": "Shahlon Silk Industries Ltd, Annual Report FY2024-25, audited financials (Lakhs)",
+  "_notes": [
+    "F6/F7/F8 split assumes Note 11 (Other Equity breakdown) is available to the mapper. If the extractor only sees the BS face line 'Other Equity 8,782.84', the model legitimately cannot split it without notes — in that case mark F6=0, F7=0, F8=8782.84 as an alternative acceptable answer.",
+    "F48 = PPE + Intangibles only (CWIP is F51). This is the canonical boundary error the v2 mapper's negative-examples block targets.",
+    "F14 must sum BOTH MSME and Others rows (multi-row aggregation test).",
+    "Current Tax Liabilities (332.53 CY / 233.00 PY) are folded into F17 per the template's Other-Current-Liab definition; some mappers may put it in F15 (Provisions Current) instead — both interpretations exist in practice."
+  ],
+  "current_year": {
+    "F5": 1786.05,
+    "F6": 3479.08,
+    "F7": 5163.45,
+    "F8": 140.31,
+    "F9": 0,
+
+    "F14": 2263.03,
+    "F15": 0,
+    "F16": 5922.93,
+    "F17": 1639.85,
+    "F18": 0,
+    "F19": 0,
+
+    "F24": 7429.24,
+    "F25": 89.03,
+    "F26": 217.12,
+    "F27": 131.00,
+    "F28": 0,
+
+    "F35": 91.70,
+    "F36": 19.88,
+    "F37": 9524.09,
+    "F38": 0,
+    "F39": 0,
+    "F40": 9727.50,
+    "F41": 505.59,
+    "F42": 0,
+    "F43": 0,
+
+    "F48": 6697.24,
+    "F49": 199.88,
+    "F50": 0,
+    "F51": 430.69,
+    "F52": 773.95,
+    "F53": 290.57,
+    "F54": 0,
+    "F55": 0,
+
+    "F66": 25126.53,
+    "F67": 17914.68,
+    "F69": 2096.75,
+    "F70": 1717.87,
+    "F71": 640.00,
+    "F73": 242.53
+  },
+  "prior_year": {
+    "F5": 1786.05,
+    "F6": 3166.15,
+    "F7": 5180.11,
+    "F8": 142.77,
+    "F9": 0,
+
+    "F14": 7036.39,
+    "F16": 7944.60,
+    "F17": 1003.01,
+
+    "F24": 5349.41,
+    "F25": 35.28,
+    "F26": 285.59,
+    "F27": 0,
+
+    "F35": 97.34,
+    "F36": 17.24,
+    "F37": 7949.31,
+    "F40": 14544.06,
+    "F41": 502.95,
+
+    "F48": 7488.40,
+    "F49": 120.11,
+    "F51": 67.82,
+    "F52": 907.29,
+    "F53": 234.84,
+
+    "F66": 31087.76,
+    "F69": 2266.04,
+    "F70": 1478.39,
+    "F71": 781.67
+  }
+}

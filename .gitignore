@@ -1,0 +1,57 @@
+# ─── Secrets ─────────────────────────────────────────────────────
+# Never commit the live config.json (it holds API keys + Airtable tokens).
+# Use config.example.json for the committed template instead.
+config.json
+.env
+.env.local
+.env.production
+
+# ─── Python build artifacts ──────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# ─── Virtual environments ────────────────────────────────────────
+.venv/
+.venv_amc/
+venv/
+env/
+ENV/
+
+# ─── Runtime data ────────────────────────────────────────────────
+# Per-job output, uploads, and ChromaDB live here. Don't ship to git;
+# Railway uses a mounted volume for persistence in production.
+output/
+uploads/
+chroma_db/
+model_cache/
+data/
+*.log
+
+# ─── IDE / editor ────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ─── Eval artifacts ──────────────────────────────────────────────
+# Keep ground-truth fixtures + run.py, drop generated reports.
+eval/reports/*.md
+eval/reports/*.html
+eval/baseline.json
+
+# ─── Misc ────────────────────────────────────────────────────────
+*.tmp
+*.bak
+*.orig
+.coverage
+htmlcov/
+.pytest_cache/

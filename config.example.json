@@ -1,0 +1,46 @@
+{
+  "_README": "Copy this file to config.json and fill in your keys, OR (recommended for production) set the same values as environment variables. Env vars always win over config.json. See .env.example for the full env-var list.",
+
+  "anthropic_api_key": "",
+  "_comment_anthropic_api_key": "Required. Anthropic Claude API key (starts with 'sk-ant-'). Use env var ANTHROPIC_API_KEY in production. Get one at https://console.anthropic.com",
+
+  "claude_model": "claude-sonnet-4-6",
+  "_comment_claude_model": "Claude model used by claude_mapper.py and claude_pdf_extractor.py. Defaults to claude-sonnet-4-6 (best cost/quality). Use claude-opus-4-7 for higher accuracy at higher cost, claude-haiku-4-5-20251001 for cheaper/faster runs.",
+
+  "openai_api_key": "",
+  "_comment_openai_api_key": "Optional fallback OpenAI key (starts with 'sk-'). Only used when mapper_mode=v2_llm. Leave empty when running on Claude only.",
+
+  "use_gpt_fallback": true,
+  "balance_tolerance": 1.0,
+  "standalone_only": true,
+  "_comment_standalone_only": "When true (default), only the Standalone variant is mapped. Consolidated sheets are still extracted but discarded before mapping. Set to false to restore both variants in the report.",
+
+  "mapper_mode": "claude",
+  "_comment_mapper_mode": "Stage 3 mapper. Options: claude (Anthropic strict tool-use, DEFAULT), v2_llm (legacy OpenAI), hybrid (rules+TF-IDF+RAG, offline), rules_only.",
+
+  "llm_mapper_model": "gpt-4o-2024-08-06",
+  "critic_model": "gpt-4o-mini",
+  "enable_critic": false,
+  "enable_ensemble": false,
+
+  "airtable_api_token": "",
+  "_comment_airtable_api_token": "Required for Airtable upload. Personal Access Token (starts with 'pat'). Use env var AIRTABLE_API_TOKEN in production.",
+
+  "airtable_base_id": "",
+  "airtable_bs_pl_table_id": "",
+  "airtable_user_table_id": "",
+  "airtable_company_table_id": "",
+  "airtable_user_email": "",
+
+  "airtable_auto_upload": false,
+  "_comment_airtable_auto_upload": "When true, every successful pipeline job auto-pushes to Airtable. When false, upload must be triggered via /api/airtable/upload/<job_id>.",
+
+  "auto_observations": true,
+  "observations_model": "gpt-4o-mini",
+
+  "_comment_api_auth": "Production-only. Set API_AUTH_TOKEN as an env var (or here) to require Bearer-token auth on /api/* routes. Bubble must send the matching token in the Authorization header. Leave empty for local dev (no auth).",
+  "api_auth_token": "",
+
+  "_comment_cors_origins": "Comma-separated list of origins allowed to call /api/* from the browser. Set to your Bubble app URL in production, e.g. 'https://yourapp.bubbleapps.io'. Use '*' for fully open (dev only).",
+  "cors_origins": "*"
+}

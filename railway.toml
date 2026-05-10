@@ -1,0 +1,21 @@
+# Railway deployment config. See https://docs.railway.com/reference/config-as-code
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "pip install -r requirements.txt"
+
+[deploy]
+# Procfile-driven start command. `--timeout 600` gives Claude PDF
+# extraction enough headroom (a 100-page annual report can take ~60s).
+# `--workers 2` is sized for a 1-vCPU / 1 GB Railway service. Bump for
+# larger plans.
+startCommand = "gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 600 --access-logfile - --error-logfile - app:app"
+
+# Healthcheck — cheap unauth'd endpoint defined in app.py
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
+
+# Restart on crash, but back off so a hard misconfig (missing key etc.)
+# doesn't burn restart-loop minutes.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
