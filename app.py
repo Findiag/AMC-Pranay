@@ -57,10 +57,6 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CORS + Bearer-token auth
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# CORS lets the Bubble frontend (different origin) call /api/* from the
-# browser. The allowed origins come from the CORS_ORIGINS env var
-# (comma-separated). Default '*' is fine for local dev / when the API is
-# reverse-proxied behind the same domain as the UI.
 try:
     from flask_cors import CORS
     _cors_origins_raw = (load_config().get("cors_origins") or "*").strip()
@@ -69,38 +65,28 @@ try:
         _origins = "*"
     CORS(app, resources={r"/api/*": {"origins": _origins}}, supports_credentials=False)
 except ImportError:
-    # flask-cors not installed — local dev usually fine without it.
     print("[startup] flask-cors not installed; CORS disabled. "
           "Install for cross-origin support: pip install flask-cors")
 
 
-# Bearer-token auth on /api/* routes. When API_AUTH_TOKEN is set
-# (env or config.json), every /api/* request must include
-#   Authorization: Bearer <token>
-# Reads from `request.headers["Authorization"]` or the `?token=` query
-# param (the latter is for SSE streams which can't easily set custom headers
-# from EventSource in the browser). Routes are otherwise unchanged.
 def _api_auth_required(view_func):
-    """Decorator-like wrapper used inside before_request below."""
-    return view_func  # placeholder; the actual check happens in the hook
+    return view_func
 
 
 @app.before_request
 def _check_api_auth():
-    # Public routes pass through.
     p = request.path or ""
     if not p.startswith("/api/"):
         return None
-    if request.method == "OPTIONS":  # CORS preflight
+    if request.method == "OPTIONS":
         return None
-    if p in ("/api/health",):  # explicit allowlist of unauth'd endpoints
+    if p in ("/api/health",):
         return None
 
     expected = (load_config().get("api_auth_token") or "").strip()
     if not expected:
-        return None  # auth disabled (no token configured)
+        return None
 
-    # Header takes precedence; fall back to ?token= for SSE clients.
     auth = (request.headers.get("Authorization") or "").strip()
     presented = ""
     if auth.lower().startswith("bearer "):
@@ -113,16 +99,12 @@ def _check_api_auth():
     return None
 
 
-# ── JSON error handlers (prevent HTML error pages) ──
 @app.errorhandler(413)
 def too_large(e):
     return jsonify({"error": "File too large. Max 500MB."}), 413
 
 @app.errorhandler(500)
 def server_error(e):
-    # Print to stderr (visible in terminal) AND include the last 20 lines
-    # of the traceback in the JSON response (visible in DevTools) — silent
-    # 500s are very hard to debug otherwise.
     traceback.print_exc()
     return jsonify({
         "error": f"Server error: {e}",
@@ -149,8 +131,7 @@ class PipelineJob:
         self.api_key = api_key
         self.skip_stage1 = skip_stage1
         self.skip_stage3 = skip_stage3
-        self.fy_override = fy_override   # None => auto-detect from filename
-        # None = use config.auto_observations; True/False = force per-job
+        self.fy_override = fy_override
         self.gen_observations = gen_observations
         self.status = "queued"
         self.stage = 0
@@ -193,15 +174,12 @@ class PipelineJob:
         self.queue.put(json.dumps(data))
 
 
-# ── Job GC: drop completed/failed jobs from memory after TTL ────────────────
-# Without this the `jobs` dict grows unbounded — each PipelineJob keeps log
-# lines + queue + output paths in memory forever.
 _JOB_TTL_SEC = 60 * 60  # 1 hour after completion
 
 
 def _gc_jobs_loop():
     while True:
-        time.sleep(300)  # every 5 min
+        time.sleep(300)
         try:
             now = time.time()
             stale = [jid for jid, j in list(jobs.items())
@@ -210,14 +188,14 @@ def _gc_jobs_loop():
             for jid in stale:
                 jobs.pop(jid, None)
         except Exception:
-            pass  # never crash the GC thread
+            pass
 
 
 threading.Thread(target=_gc_jobs_loop, daemon=True).start()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# STDOUT CAPTURE — route module prints → job log
+# STDOUT CAPTURE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class LogCapture(io.TextIOBase):
@@ -253,16 +231,13 @@ class LogCapture(io.TextIOBase):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# PIPELINE — uses EXACT same top-level functions as CLI
+# PIPELINE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def run_pipeline(job: PipelineJob):
     out_dir = OUTPUT_DIR / job.job_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Per-thread stdout/stderr capture via contextlib — does NOT mutate
-    # global sys.stdout, so concurrent uploads don't bleed logs into each
-    # other's SSE streams.
     cap_out = LogCapture(job, "info")
     cap_err = LogCapture(job, "error")
 
@@ -325,12 +300,10 @@ def run_pipeline(job: PipelineJob):
                 cap_out.flush()
                 cap_err.flush()
 
-                # Find output — extract_tables saves as {stem}_extracted.xlsx
                 expected = out_dir / f"{Path(working_pdf).stem}_extracted.xlsx"
                 if expected.exists():
                     extracted_xlsx = str(expected)
                 else:
-                    # Fallback: find any new _extracted.xlsx
                     for f in sorted(out_dir.glob("*_extracted.xlsx"), key=os.path.getmtime, reverse=True):
                         extracted_xlsx = str(f)
                         break
@@ -348,12 +321,9 @@ def run_pipeline(job: PipelineJob):
                 continue
 
             # ═══════════════════════════════════════
-            # STAGE 2.5: sanity-check extracted xlsx; on failure, hand the
-            # PDF to Claude for native-PDF extraction. The downstream mapper
-            # consumes the same xlsx shape either way.
+            # STAGE 2.5: sanity-check extracted xlsx
             # ═══════════════════════════════════════
-            claude_used = False  # tracks whether we've already burned a
-                                  # Claude PDF call, so Stage 3.5 doesn't loop
+            claude_used = False
             try:
                 from claude_pdf_extractor import (
                     is_extraction_broken, extract_with_claude,
@@ -370,8 +340,7 @@ def run_pipeline(job: PipelineJob):
                             if (job.api_key or "").startswith("sk-ant-")
                             else (cfg.get("anthropic_api_key") or "").strip())
                 if anth_key:
-                    job.log("Falling back to Claude native PDF extraction...",
-                             "warning")
+                    job.log("Falling back to Claude native PDF extraction...", "warning")
                     try:
                         with contextlib.redirect_stdout(cap_out), \
                              contextlib.redirect_stderr(cap_err):
@@ -388,19 +357,16 @@ def run_pipeline(job: PipelineJob):
                             if claude_xlsx not in job.output_files:
                                 job.output_files.append(claude_xlsx)
                             job.log(f"✓ Claude extraction succeeded: "
-                                     f"{os.path.basename(claude_xlsx)}",
-                                     "success")
+                                     f"{os.path.basename(claude_xlsx)}", "success")
                         else:
                             job.log("⚠ Claude fallback returned no output — "
-                                     "continuing with rule-based xlsx",
-                                     "warning")
+                                     "continuing with rule-based xlsx", "warning")
                     except Exception as e:
                         job.log(f"⚠ Claude fallback raised: {e}", "warning")
                         job.log(traceback.format_exc(), "warning")
                 else:
                     job.log("⚠ No anthropic_api_key configured — cannot run "
-                             "Claude fallback. Mapper will run on the broken "
-                             "extract.", "warning")
+                             "Claude fallback.", "warning")
 
             # ═══════════════════════════════════════
             # STAGE 3: process_file() → Report
@@ -434,17 +400,7 @@ def run_pipeline(job: PipelineJob):
                 job.log(traceback.format_exc(), "error")
 
             # ═══════════════════════════════════════
-            # STAGE 3.5: post-mapper sanity check — runs for EVERY job.
-            # Catches:
-            #   - mostly-zero report (rare API edge / schema mismatch)
-            #   - BS imbalance > 1% of Total Assets (Finolex-style: a row
-            #     missed by the extractor that the mapper couldn't recover)
-            #   - all-variants-empty report
-            # When broken AND we haven't already burned a Claude PDF call
-            # in Stage 2.5, do it now and re-map once. If Claude was
-            # already used and the result is STILL broken, surface a
-            # strong warning rather than looping (re-extracting from the
-            # same PDF would just yield the same data).
+            # STAGE 3.5: post-mapper sanity check
             # ═══════════════════════════════════════
             if report_path and os.path.exists(report_path):
                 try:
@@ -457,24 +413,16 @@ def run_pipeline(job: PipelineJob):
                     rep_broken, rep_reason = False, f"post-check skipped: {e}"
 
                 if rep_broken and claude_used:
-                    # Already tried Claude PDF in Stage 2.5; re-running it
-                    # would reuse the same source bytes and produce the
-                    # same result. Surface the gap loudly and move on so
-                    # the user (or downstream Airtable WARNINGS) sees it.
-                    job.log(f"⚠ Report still broken AFTER Claude fallback: "
-                             f"{rep_reason}", "error")
-                    job.log("⚠ Manual review required — see WARNINGS sheet "
-                             "in the Report xlsx.", "warning")
+                    job.log(f"⚠ Report still broken AFTER Claude fallback: {rep_reason}", "error")
+                    job.log("⚠ Manual review required — see WARNINGS sheet.", "warning")
                 elif rep_broken:
-                    job.log(f"⚠ Mapper output looks broken: {rep_reason}",
-                             "warning")
+                    job.log(f"⚠ Mapper output looks broken: {rep_reason}", "warning")
                     cfg = load_config()
                     anth_key = (job.api_key
                                 if (job.api_key or "").startswith("sk-ant-")
                                 else (cfg.get("anthropic_api_key") or "").strip())
                     if anth_key:
-                        job.log("Retrying via Claude native PDF extraction "
-                                 "+ remap...", "warning")
+                        job.log("Retrying via Claude native PDF extraction + remap...", "warning")
                         try:
                             with contextlib.redirect_stdout(cap_out), \
                                  contextlib.redirect_stderr(cap_err):
@@ -505,77 +453,49 @@ def run_pipeline(job: PipelineJob):
                                     report_path = new_report
                                     if new_report not in job.output_files:
                                         job.output_files.append(new_report)
-                                    job.log(f"✓ Recovered via Claude: "
-                                             f"{os.path.basename(new_report)}",
-                                             "success")
-                                    # Re-check the recovered report; if it's
-                                    # still broken, log it but don't loop.
+                                    job.log(f"✓ Recovered via Claude: {os.path.basename(new_report)}", "success")
                                     rep_broken2, rep_reason2 = is_report_broken(report_path)
                                     if rep_broken2:
-                                        job.log(f"⚠ Recovered report still "
-                                                 f"broken: {rep_reason2}",
-                                                 "error")
+                                        job.log(f"⚠ Recovered report still broken: {rep_reason2}", "error")
                                 else:
-                                    job.log("⚠ Mapper retry produced no "
-                                             "output", "warning")
+                                    job.log("⚠ Mapper retry produced no output", "warning")
                             else:
-                                job.log("⚠ Claude fallback returned no xlsx",
-                                         "warning")
+                                job.log("⚠ Claude fallback returned no xlsx", "warning")
                         except Exception as e:
                             job.log(f"⚠ Recovery raised: {e}", "warning")
                             job.log(traceback.format_exc(), "warning")
                     else:
-                        job.log("⚠ No anthropic_api_key — cannot recover. "
-                                 "Report flagged as broken in WARNINGS sheet.",
-                                 "warning")
+                        job.log("⚠ No anthropic_api_key — cannot recover.", "warning")
 
-                # ── YoY anomaly check (always runs on the final report) ──
-                # Catches decimal-point bugs, wrong-unit uploads, mapper
-                # cell-swap mistakes — anything that produces a
-                # statistically implausible year-over-year swing on a
-                # known-stable line. Findings are appended to WARNINGS;
-                # they don't block the upload, just flag for review.
+                # ── YoY anomaly check ──
                 try:
                     if report_path and os.path.exists(report_path):
                         anomalies = check_yoy_anomalies(report_path)
                         if anomalies:
                             crit = sum(1 for s, _ in anomalies if s == "critical")
                             warn = len(anomalies) - crit
-                            job.log(f"⚠ YoY anomaly check: {crit} critical, "
-                                     f"{warn} warn — see WARNINGS sheet",
+                            job.log(f"⚠ YoY anomaly check: {crit} critical, {warn} warn — see WARNINGS sheet",
                                      "warning" if not crit else "error")
                             for sev, msg in anomalies[:5]:
                                 tag = "‼" if sev == "critical" else "⚠"
-                                job.log(f"   {tag} {msg}",
-                                         "error" if sev == "critical" else "warning")
+                                job.log(f"   {tag} {msg}", "error" if sev == "critical" else "warning")
                             append_warnings_to_report(
                                 report_path,
-                                [("YoY", sev.upper(), msg)
-                                 for sev, msg in anomalies],
+                                [("YoY", sev.upper(), msg) for sev, msg in anomalies],
                             )
                 except Exception as e:
-                    job.log(f"⚠ YoY anomaly check failed (non-fatal): {e}",
-                             "warning")
+                    job.log(f"⚠ YoY anomaly check failed (non-fatal): {e}", "warning")
 
         # ═══════════════════════════════════════
         # POST-PIPELINE: auto-upload + auto-observations
         # ═══════════════════════════════════════
-        # Once a *_Report.xlsx is produced, push it to Airtable and trigger
-        # observations for that company so the diagnostic report is ready
-        # to view immediately. Both gated by config (default: ON for obs,
-        # OFF for upload to avoid surprise writes).
         cfg = load_config()
         do_upload = bool(cfg.get("airtable_auto_upload", False))
-        # Per-job observations toggle wins over the config default. None
-        # means "no per-job preference" — fall back to config.
         if job.gen_observations is None:
             do_obs = bool(cfg.get("auto_observations", True))
         else:
             do_obs = bool(job.gen_observations)
             job.log(f"ℹ Observations toggle (per-job) = {do_obs}", "info")
-        # company_id -> set of bs&pl record ids that were just uploaded.
-        # Auto-obs runs only on these specific records — not on the
-        # company's full history — to avoid 7×30s loops on every re-upload.
         company_to_bspl_ids: dict[str, set[str]] = {}
 
         if do_upload:
@@ -586,17 +506,12 @@ def run_pipeline(job: PipelineJob):
                     from airtable_uploader import upload_report
                     for rp in reports:
                         try:
-                            res = upload_report(rp,
-                                                fy_override=job.fy_override,
+                            res = upload_report(rp, fy_override=job.fy_override,
                                                 log=lambda m: job.log(m, "info"))
                             if res.get("ok"):
-                                py_act = res.get("py_action", "?")
-                                cy_act = res.get("cy_action", "?")
                                 job.log(f"✓ Airtable {os.path.basename(rp)} -> "
                                         f"company={res.get('company')}, "
-                                        f"PY {py_act}={res.get('prior_id')}, "
-                                        f"CY {cy_act}={res.get('current_id')}",
-                                        "success")
+                                        f"PY={res.get('prior_id')}, CY={res.get('current_id')}", "success")
                                 cid = res.get("company_record_id")
                                 if cid:
                                     s = company_to_bspl_ids.setdefault(cid, set())
@@ -606,49 +521,34 @@ def run_pipeline(job: PipelineJob):
                                 job.log(f"⚠ Airtable upload failed for {os.path.basename(rp)}: "
                                         f"{res.get('error')}", "warning")
                         except Exception as e:
-                            job.log(f"⚠ Airtable upload exception for "
-                                    f"{os.path.basename(rp)}: {e}", "warning")
+                            job.log(f"⚠ Airtable upload exception for {os.path.basename(rp)}: {e}", "warning")
                 except ImportError as e:
                     job.log(f"⚠ airtable_uploader unavailable: {e}", "warning")
 
         if do_obs and company_to_bspl_ids:
             total_rows = sum(len(s) for s in company_to_bspl_ids.values())
-            job.log(f"━━━ Auto-generating observations for "
-                    f"{total_rows} just-uploaded bs&pl row(s) "
-                    f"({len(company_to_bspl_ids)} company) ━━━", "header")
+            job.log(f"━━━ Auto-generating observations for {total_rows} bs&pl row(s) ━━━", "header")
             try:
                 from observations import run_pipeline as run_obs
-                # Stream the per-metric prints from observations.py straight
-                # into the dashboard SSE — no buffering — so the user sees
-                # OBS / RECOM / FUTURE / ACK lines as they're generated.
-                # bspl_ids filter scopes processing to ONLY the new rows so
-                # historical observations aren't regenerated on every upload.
                 for cid, ids in company_to_bspl_ids.items():
                     try:
                         with contextlib.redirect_stdout(cap_out), \
                              contextlib.redirect_stderr(cap_err):
-                            out = run_obs(company_id=cid,
-                                          bspl_ids=list(ids),
-                                          dry_run=False, force=False,
-                                          capture_log=False)
+                            out = run_obs(company_id=cid, bspl_ids=list(ids),
+                                          dry_run=False, force=False, capture_log=False)
                         cap_out.flush()
                         cap_err.flush()
                         c = out.get("counts", {})
-                        job.log(f"✓ Observations for company {cid}: "
-                                f"created={c.get('created',0)} "
-                                f"updated={c.get('updated',0)} "
-                                f"skipped={c.get('skipped',0)} "
+                        job.log(f"✓ Observations for {cid}: created={c.get('created',0)} "
+                                f"updated={c.get('updated',0)} skipped={c.get('skipped',0)} "
                                 f"error={c.get('error',0)}", "success")
                     except Exception as e:
                         job.log(f"⚠ Observations failed for {cid}: {e}", "warning")
             except ImportError as e:
                 job.log(f"⚠ observations module unavailable: {e}", "warning")
         elif do_obs and not do_upload:
-            job.log("ℹ Auto-observations skipped — enable airtable_auto_upload "
-                    "in config.json to trigger them automatically after each run.",
-                    "info")
+            job.log("ℹ Auto-observations skipped — enable airtable_auto_upload in config.json.", "info")
 
-        # All files done
         if job.output_files:
             job.log(f"━━━ Done — {len(job.output_files)} file(s) generated ━━━", "header")
             job.finish()
@@ -672,13 +572,9 @@ def index():
 
 @app.route("/landing")
 def landing():
-    """Marketing landing page — links into /dashboard."""
     return render_template("landing.html")
 
 
-# Unauth'd lightweight liveness probe — Railway / load balancers hit this.
-# Stays separate from /health (which requires loading the matcher and is
-# more expensive); /api/health is intentionally cheap.
 @app.route("/api/health")
 def api_health():
     return jsonify({"status": "ok"}), 200
@@ -699,10 +595,6 @@ def health():
                          and (cfg.get("airtable_base_id") or "").strip())
     auto_upload   = bool(cfg.get("airtable_auto_upload", False))
     auto_obs      = bool(cfg.get("auto_observations", True))
-    # Mode summary for the dashboard badge:
-    #   "ai_full"     LLM + airtable both wired (full AI + storage)
-    #   "ai_only"     LLM only — mapping uses Claude/GPT, no Airtable storage
-    #   "offline"     no LLM key — pipeline runs offline (rules+TF-IDF only)
     llm_set = anthropic_set or openai_set
     if llm_set and airtable_set:
         mode = "ai_full"
@@ -714,7 +606,7 @@ def health():
         "status":                   "ok",
         "matcher":                  has_matcher,
         "anthropic_key_configured": anthropic_set,
-        "api_key_configured":       openai_set,           # legacy field name
+        "api_key_configured":       openai_set,
         "openai_key_configured":    openai_set,
         "airtable_configured":      airtable_set,
         "auto_upload":              auto_upload,
@@ -727,10 +619,8 @@ def health():
 
 @app.route("/api/config", methods=["GET", "POST"])
 def api_config():
-    """Read or update persistent config (config.json)."""
     if request.method == "GET":
         cfg = load_config()
-        # Redact API keys in GET responses — return whether each is set, not the value
         return jsonify({
             "anthropic_api_key_set":     bool(cfg.get("anthropic_api_key")),
             "anthropic_api_key_preview": (cfg.get("anthropic_api_key", "")[:11] + "…")
@@ -744,7 +634,6 @@ def api_config():
             "balance_tolerance":         cfg.get("balance_tolerance", 1.0),
             "standalone_only":           cfg.get("standalone_only", True),
         })
-    # POST: update keys
     try:
         data = request.get_json(force=True, silent=True) or {}
     except Exception:
@@ -752,7 +641,6 @@ def api_config():
     updates = {}
     if "anthropic_api_key" in data:
         key = str(data["anthropic_api_key"]).strip()
-        # Sanity: empty (clear) or starts with 'sk-ant-'
         if key and not key.startswith("sk-ant-"):
             return jsonify({"error": "Anthropic keys start with 'sk-ant-'. Paste the full key."}), 400
         updates["anthropic_api_key"] = key
@@ -766,8 +654,7 @@ def api_config():
     if "mapper_mode" in data:
         m = str(data["mapper_mode"]).strip()
         if m not in ("claude", "v2_llm", "hybrid", "rules_only"):
-            return jsonify({"error": "mapper_mode must be one of "
-                                       "claude|v2_llm|hybrid|rules_only"}), 400
+            return jsonify({"error": "mapper_mode must be one of claude|v2_llm|hybrid|rules_only"}), 400
         updates["mapper_mode"] = m
     if "use_gpt_fallback" in data:
         updates["use_gpt_fallback"] = bool(data["use_gpt_fallback"])
@@ -786,7 +673,6 @@ def api_config():
 
 @app.route("/api/rag/stats", methods=["GET"])
 def api_rag_stats():
-    """Return vector DB stats: how many BS/PL entries, which models, threshold."""
     try:
         from rag_matcher import stats as rag_stats
         return jsonify(rag_stats())
@@ -796,12 +682,6 @@ def api_rag_stats():
 
 @app.route("/api/corrections", methods=["POST"])
 def api_corrections():
-    """Human reviewer confirms the correct mapping for a label.
-    Payload: {"label": "...", "field": "Trade Payables",
-              "side": "BS"|"PL", "section": "current_liab" (optional),
-              "company": "Colgate" (optional)}
-    The correction is added to ChromaDB with confidence=1.0 so it outweighs
-    seed data in future retrieval."""
     try:
         from rag_matcher import add_correction
     except Exception as e:
@@ -819,8 +699,7 @@ def api_corrections():
     if side not in ("BS", "PL"):
         return jsonify({"error": "side must be 'BS' or 'PL'"}), 400
 
-    ok = add_correction(label, field, side=side, section=section,
-                        source_company=company)
+    ok = add_correction(label, field, side=side, section=section, source_company=company)
     if not ok:
         return jsonify({"error": "failed to store correction"}), 500
     return jsonify({"status": "stored", "label": label, "field": field})
@@ -829,7 +708,6 @@ def api_corrections():
 @app.route("/api/upload", methods=["POST"])
 def upload():
     try:
-        # Support pdf_url parameter — Bubble sends a URL, Railway fetches it
         pdf_url = request.form.get("pdf_url", "").strip()
         if pdf_url and "files" not in request.files:
             import requests as _requests
@@ -838,16 +716,13 @@ def upload():
             r = _requests.get(pdf_url, timeout=60)
             if r.status_code != 200:
                 return jsonify({"error": f"Failed to fetch PDF from URL: {r.status_code}"}), 400
-            # Get filename from URL or use default
             url_path = pdf_url.split("?")[0]
             fname = os.path.basename(url_path) or "report.pdf"
             if not fname.endswith(".pdf"):
                 fname += ".pdf"
-            # Save to a temp location so the rest of the pipeline works normally
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", prefix=fname.replace(".pdf","_"))
             tmp.write(r.content)
             tmp.close()
-            # Inject as a fake file list for the rest of the route
             request._pdf_url_paths = [tmp.name]
             request._pdf_url_names = [fname]
 
@@ -867,25 +742,14 @@ def upload():
                 return jsonify({"error": "No files selected"}), 400
 
         api_key = request.form.get("api_key", "").strip()
-        # Fall back to config.json when form field is empty. Prefer the
-        # Claude key (primary mapper); only fall back to the OpenAI key when
-        # Claude isn't configured.
         if not api_key:
             cfg = load_config()
             api_key = (cfg.get("anthropic_api_key", "").strip()
                        or cfg.get("openai_api_key", "").strip())
         skip_stage1 = request.form.get("skip_stage1") == "true"
         skip_stage3 = False
-
-        # FY override (optional): user picks the financial year on upload.
-        # Empty string => auto-detect from filename (existing behavior).
-        # Format: "FY2425" or an ISO end-date like "2025-03-31".
         fy_override = (request.form.get("fy_override") or "").strip() or None
 
-        # Per-job observations toggle. Form may send "true"/"false" or be
-        # absent (None = use config.auto_observations). Anything other than
-        # the literal string "false" is treated as ON, matching the
-        # default-on UI checkbox.
         raw_obs = request.form.get("gen_observations")
         if raw_obs is None:
             gen_observations = None
@@ -916,8 +780,7 @@ def upload():
             return jsonify({"error": "No valid files uploaded"}), 400
 
         job = PipelineJob(job_id, pdf_paths, api_key, skip_stage1, skip_stage3,
-                          fy_override=fy_override,
-                          gen_observations=gen_observations)
+                          fy_override=fy_override, gen_observations=gen_observations)
         jobs[job_id] = job
 
         thread = threading.Thread(target=run_pipeline, args=(job,), daemon=True)
@@ -971,9 +834,6 @@ def download(job_id, filename):
 
 @app.route("/api/companies", methods=["GET"])
 def api_companies():
-    """List companies from the Airtable company table for the diagnostic-report
-    UI. Returns minimal {id, name} pairs sorted by name. Cached in-memory for
-    60s to avoid hammering Airtable on every dropdown render."""
     import time as _time
     cache = api_companies._cache  # type: ignore[attr-defined]
     now = _time.time()
@@ -986,8 +846,7 @@ def api_companies():
     try:
         token, _, base_id = _creds()
         if not token:
-            return jsonify({"error": "airtable_api_token missing in config.json",
-                            "companies": []}), 400
+            return jsonify({"error": "airtable_api_token missing in config.json", "companies": []}), 400
         recs = at_list_all(TBL_COMPANY, token, base_id)
         out = []
         for r in recs:
@@ -999,23 +858,12 @@ def api_companies():
         api_companies._cache = {"at": now, "data": payload}  # type: ignore[attr-defined]
         return jsonify(payload)
     except Exception as e:
-        return jsonify({"error": f"{type(e).__name__}: {e}",
-                        "companies": []}), 500
+        return jsonify({"error": f"{type(e).__name__}: {e}", "companies": []}), 500
 api_companies._cache = None  # type: ignore[attr-defined]
 
 
 @app.route("/api/observations/run", methods=["POST"])
 def api_observations_run():
-    """Trigger the bs&pl observations pipeline for a company.
-
-    JSON body (all optional):
-      {"company_id": "recXXX",   // Airtable id; pipeline processes this company only
-       "user_id":    "recYYY",   // alt. filter — bs&pl rows for this user
-       "limit":      5,           // cap number of bs&pl rows processed
-       "force":      false,       // regenerate everything
-       "dry_run":    true,        // build payloads but don't write
-       "model":      "gpt-4o-mini"}
-    """
     body = request.get_json(silent=True) or {}
     try:
         from observations import run_pipeline
@@ -1038,11 +886,6 @@ def api_observations_run():
 
 @app.route("/api/report/<company_id>", methods=["GET"])
 def api_report_html(company_id):
-    """HTML financial diagnostic report for a company.
-    Query params:
-      ?fy=2024-03-31     (default: most recent)
-      ?as=json           (return structured data instead of HTML)
-    """
     fy = request.args.get("fy", "").strip() or None
     fmt = request.args.get("as", "").lower()
     try:
@@ -1054,7 +897,6 @@ def api_report_html(company_id):
     except Exception as e:
         return jsonify({"error": f"{type(e).__name__}: {e}"}), 500
     if fmt == "json":
-        # Strip dataclass benchmark before serializing
         data = json.loads(json.dumps(result["data"],
                                       default=lambda o: getattr(o, "__dict__", str(o))))
         return jsonify(data)
@@ -1063,7 +905,6 @@ def api_report_html(company_id):
 
 @app.route("/api/report/by-name/<path:company_name>", methods=["GET"])
 def api_report_by_name(company_name):
-    """Same as /api/report/<id> but looks up by company_name field."""
     fy = request.args.get("fy", "").strip() or None
     try:
         from report_generator import build_report_for_company
@@ -1076,19 +917,29 @@ def api_report_by_name(company_name):
     return Response(result["html"], mimetype="text/html; charset=utf-8")
 
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# FIX: no longer requires job in memory.
+# Reads *_Report.xlsx directly from /data volume
+# so it works across gunicorn workers + restarts.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 @app.route("/api/airtable/upload/<job_id>", methods=["POST"])
 def api_airtable_upload(job_id):
     """Push the job's *_Report.xlsx file(s) to Airtable.
 
+    Works even when the job is no longer in the in-memory `jobs` dict
+    (e.g. a different gunicorn worker handled the original /api/upload,
+    or the server restarted between upload and this call). Reads output
+    files directly from the /data volume on disk.
+
     Optional JSON body:
-      {"company": "Override Name",     // skip filename auto-detection
-       "user_email": "...",            // override default
-       "fy": "FY2425",                 // override FY auto-detection
-       "dry_run": true}                // build payloads without POSTing
+      {"company": "Override Name",
+       "user_email": "...",
+       "fy": "FY2425",
+       "dry_run": true}
     """
+    # job may be None if a different gunicorn worker handled /api/upload
+    # or if the server restarted. That's fine — we read from disk instead.
     job = jobs.get(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
 
     out_dir = OUTPUT_DIR / job_id
     if not out_dir.exists():
@@ -1113,7 +964,7 @@ def api_airtable_upload(job_id):
                 user_email_override=body.get("user_email"),
                 fy_override=body.get("fy"),
                 dry_run=bool(body.get("dry_run")),
-                log=lambda m: job.log(m, "info"),
+                log=lambda m: job.log(m, "info") if job else None,
             )
             r["report"] = report.name
             results.append(r)
@@ -1125,7 +976,6 @@ def api_airtable_upload(job_id):
 
 @app.route("/api/download_all/<job_id>")
 def download_all(job_id):
-    """Download all output files as a single zip."""
     job = jobs.get(job_id)
     if not job:
         return jsonify({"error": "Job not found"}), 404
@@ -1156,8 +1006,6 @@ def status(job_id):
 if __name__ == "__main__":
     UPLOAD_DIR.mkdir(exist_ok=True)
     OUTPUT_DIR.mkdir(exist_ok=True)
-    # Honor PORT env var so Railway / Heroku / Fly can inject the bound port.
-    # Fallback to 5000 for local dev. host=0.0.0.0 is required on Railway.
     port = int(os.environ.get("PORT", "5000"))
     print()
     print("  ╔═══════════════════════════════════════════╗")
