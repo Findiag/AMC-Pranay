@@ -834,6 +834,7 @@ def upload():
         if pdf_url and "files" not in request.files:
             import requests as _requests
             import tempfile, os
+            if pdf_url.startswith("//"): pdf_url = "https:" + pdf_url
             r = _requests.get(pdf_url, timeout=60)
             if r.status_code != 200:
                 return jsonify({"error": f"Failed to fetch PDF from URL: {r.status_code}"}), 400
