@@ -829,12 +829,41 @@ def api_corrections():
 @app.route("/api/upload", methods=["POST"])
 def upload():
     try:
-        if "files" not in request.files:
+        # Support pdf_url parameter — Bubble sends a URL, Railway fetches it
+        pdf_url = request.form.get("pdf_url", "").strip()
+        if pdf_url and "files" not in request.files:
+            import requests as _requests
+            import tempfile, os
+            r = _requests.get(pdf_url, timeout=60)
+            if r.status_code != 200:
+                return jsonify({"error": f"Failed to fetch PDF from URL: {r.status_code}"}), 400
+            # Get filename from URL or use default
+            url_path = pdf_url.split("?")[0]
+            fname = os.path.basename(url_path) or "report.pdf"
+            if not fname.endswith(".pdf"):
+                fname += ".pdf"
+            # Save to a temp location so the rest of the pipeline works normally
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", prefix=fname.replace(".pdf","_"))
+            tmp.write(r.content)
+            tmp.close()
+            # Inject as a fake file list for the rest of the route
+            request._pdf_url_paths = [tmp.name]
+            request._pdf_url_names = [fname]
+
+        if "files" not in request.files and not hasattr(request, "_pdf_url_paths"):
             return jsonify({"error": "No files uploaded"}), 400
 
-        files = request.files.getlist("files")
-        if not files or not any(f.filename for f in files):
-            return jsonify({"error": "No files selected"}), 400
+        if hasattr(request, "_pdf_url_paths"):
+            pdf_paths_override = request._pdf_url_paths
+            pdf_names_override = request._pdf_url_names
+        else:
+            pdf_paths_override = None
+            pdf_names_override = None
+
+        if not hasattr(request, "_pdf_url_paths"):
+            files = request.files.getlist("files")
+            if not files or not any(f.filename for f in files):
+                return jsonify({"error": "No files selected"}), 400
 
         api_key = request.form.get("api_key", "").strip()
         # Fall back to config.json when form field is empty. Prefer the
@@ -867,12 +896,20 @@ def upload():
         job_dir.mkdir(parents=True, exist_ok=True)
 
         pdf_paths = []
-        for f in files:
-            if f.filename:
-                fname = secure_filename(f.filename)
+        if pdf_paths_override:
+            import shutil
+            for tmp_path, orig_name in zip(pdf_paths_override, pdf_names_override):
+                fname = secure_filename(orig_name)
                 fpath = str(job_dir / fname)
-                f.save(fpath)
+                shutil.move(tmp_path, fpath)
                 pdf_paths.append(fpath)
+        else:
+            for f in files:
+                if f.filename:
+                    fname = secure_filename(f.filename)
+                    fpath = str(job_dir / fname)
+                    f.save(fpath)
+                    pdf_paths.append(fpath)
 
         if not pdf_paths:
             return jsonify({"error": "No valid files uploaded"}), 400
